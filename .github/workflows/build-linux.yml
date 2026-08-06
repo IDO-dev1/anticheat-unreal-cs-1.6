@@ -30,7 +30,8 @@ jobs:
         run: |
           grep -q '#include <usercmd.h>' src/plugin.cpp
           grep -q 'const usercmd_s\* cmd' src/plugin.cpp
-          grep -q 'liveac_status' src/plugin.cpp
+          grep -q 'liveac_scan' src/plugin.cpp
+          grep -q 'pfnClientCommand' src/plugin.cpp
           grep -q 'if (is_bot(id))' src/plugin.cpp
 
       - name: Configure
@@ -58,12 +59,13 @@ jobs:
           mkdir -p package/cstrike/addons/liveac/dlls
           cp build/live_unreal_scanner_mm_i386.so package/cstrike/addons/liveac/dlls/
           cp config/liveac.cfg package/cstrike/addons/liveac/
+          cp config/liveac_admins.ini package/cstrike/addons/liveac/
           cp docs/INSTALL_HE.md package/
           cp docs/ADMIN_COMMANDS_HE.md package/
-          tar -czf live-unreal-scanner-v0.4.0-linux-i386.tar.gz -C package .
+          tar -czf live-unreal-scanner-v0.6.0-linux-i386.tar.gz -C package .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: live-unreal-scanner-v0.4.0-linux-i386
-          path: live-unreal-scanner-v0.4.0-linux-i386.tar.gz
+          name: live-unreal-scanner-v0.6.0-linux-i386
+          path: live-unreal-scanner-v0.6.0-linux-i386.tar.gz
           if-no-files-found: error

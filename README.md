@@ -42,3 +42,19 @@ cstrike/addons/liveac/liveac_admins.ini
 ## בטיחות
 
 המערכת מתריעה ושומרת ראיות בלבד. אין Ban/Kick אוטומטי. Speed כרגע הוא מדד דיווח שמרני (`>520` units/s במספר דגימות), ולא ראיה עצמאית לבאן.
+
+## v1.0 hardening changes
+
+Developed by **IDO** and released under the **MIT License**.
+
+- `liveac.cfg` is now parsed at runtime (`key=value`).
+- `liveac_reload_config` reloads tuning without restarting the server and resets detector state.
+- JSONL fields are escaped, including player names and evidence details.
+- Text logs remove control characters to prevent forged log lines.
+- Log directories are created once during plugin initialization; no shell or `system()` call is used on the game thread.
+- Evidence, panel, and admin-audit logs rotate to `.1` at 25 MB.
+- Ambiguous partial player names are rejected and numeric slots are displayed.
+- SteamID values are cached per report/event.
+- `liveac_menu` displays the in-game administration command menu.
+- ReChecker is not duplicated. Use ReChecker separately for configured client resource/hash checks; LiveAC focuses on behavioral detection.
+- No automatic kick or ban.

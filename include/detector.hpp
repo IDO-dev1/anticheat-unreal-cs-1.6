@@ -4,6 +4,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <map>
+#include <set>
 
 namespace liveac {
 
@@ -67,6 +69,7 @@ public:
     explicit PlayerDetector(Config cfg = {});
     std::vector<Evidence> push(const Sample& sample);
     float score() const noexcept { return score_; }
+    std::size_t detector_diversity() const noexcept { return active_types_.size(); }
     int idealjump_strikes() const noexcept { return idealjump_strikes_; }
     void reset();
 
@@ -83,6 +86,8 @@ private:
     std::vector<std::pair<std::string, double>> last_events_;
     std::deque<float> angle_step_history_;
     float score_{};
+    std::map<std::string, float> type_points_;
+    std::set<std::string> active_types_;
     double last_time_{};
     double last_snap_time_{-1000.0};
     double last_tiny_angle_time_{-1000.0};

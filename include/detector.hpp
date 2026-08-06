@@ -19,6 +19,14 @@ struct Sample {
     std::uint32_t buttons{};
     bool on_ground{};
     bool alive{};
+
+    // Server-side target context supplied by the Metamod collector.
+    int target_slot{};
+    bool target_visible{};
+    bool target_in_crosshair{};
+    float target_angle_error{180.0f};
+    float previous_target_angle_error{180.0f};
+    int weapon_id{};
 };
 
 struct Evidence {
@@ -35,7 +43,10 @@ struct Config {
     float snap_max_seconds = 0.040f;
     float snap_weight = 6.0f;
     float attack_after_snap_seconds = 0.080f;
-    float snap_attack_weight = 5.0f;
+    float snap_attack_weight = 4.0f;
+    float target_lock_degrees = 2.5f;
+    float target_snap_improvement_degrees = 12.0f;
+    int target_snap_required_strikes = 4;
 
     // UDS AIM TYPE 5 adapted constants/behavior.
     int uds_sensitivity_history = 15;
@@ -56,7 +67,15 @@ struct Config {
     int uds_autoattack_min_cmd_gap = 2;
     int uds_autoattack_max_cmd_gap = 7;
     int uds_autoattack_strikes = 4;
-    float uds_autoattack_weight = 8.0f;
+    float uds_autoattack_weight = 5.0f;
+
+    // Target acquisition timing. This is deliberately conservative and only
+    // emits after a repeated low-variance pattern while a visible enemy is acquired.
+    int reaction_min_samples = 8;
+    float reaction_fast_ms = 90.0f;
+    float reaction_median_ms = 75.0f;
+    float reaction_stddev_ms = 18.0f;
+    float reaction_weight = 14.0f;
 
     float alert_score = 55.0f;
     float high_score = 75.0f;
@@ -100,6 +119,11 @@ private:
     int snap_attack_count_{};
     std::uint64_t last_attack_cmd_{};
     int autoattack_strikes_{};
+    int target_snap_strikes_{};
+    int last_target_slot_{};
+    double target_visible_since_{-1000.0};
+    bool previous_target_visible_{};
+    std::deque<float> reaction_samples_ms_;
 };
 
 } // namespace liveac

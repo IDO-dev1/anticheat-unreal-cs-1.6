@@ -35,6 +35,8 @@ jobs:
           grep -q 'if (is_bot(id))' src/plugin.cpp
           grep -q 'target_context' src/plugin.cpp
           grep -q 'TARGET_AIM_SNAP' src/detector.cpp
+          grep -q 'INSUFFICIENT' src/plugin.cpp
+          grep -q 'horizontal_speed' src/plugin.cpp
 
       - name: Configure
         run: |
@@ -64,11 +66,11 @@ jobs:
           cp config/liveac_admins.ini package/cstrike/addons/liveac/
           cp docs/INSTALL_HE.md package/
           cp docs/ADMIN_COMMANDS_HE.md package/
-          cp docs/V0.7_HE.md package/
-          tar -czf live-unreal-scanner-v0.7.0-linux-i386.tar.gz -C package .
+          cp docs/V0.8_HE.md package/
+          tar -czf live-unreal-scanner-v0.8.0-linux-i386.tar.gz -C package .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: live-unreal-scanner-v0.7.0-linux-i386
-          path: live-unreal-scanner-v0.7.0-linux-i386.tar.gz
+          name: live-unreal-scanner-v0.8.0-linux-i386
+          path: live-unreal-scanner-v0.8.0-linux-i386.tar.gz
           if-no-files-found: error

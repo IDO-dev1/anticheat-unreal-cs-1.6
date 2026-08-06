@@ -1,18 +1,16 @@
-# Live Unreal Scanner v0.7 — Context Core
+# Live Unreal Scanner v0.8 — Verifiable Scan Reports
 
-מודול Metamod ל־CS 1.6/ReHLDS שמבצע ניתוח server-side בלבד. אין Ban או Kick אוטומטי.
+מודול Metamod ל־CS 1.6/ReHLDS שמנתח שחקנים אנושיים בלבד ומספק לאדמין דוח סריקה מפורט.
 
-## מה חדש ב־v0.7
+## השינוי המרכזי
 
-- סריקה אוטומטית של כל שחקן אנושי; בוטים מדולגים.
-- בחירת האויב הנראה הקרוב ביותר לכוונת באמצעות TraceLine.
-- `TARGET_AIM_SNAP` דורש שיפור משמעותי בכיוון וסיום קרוב למטרה נראית.
-- Aim Type 5 מותאם מתקבל רק כאשר הכוונת נעולה על אויב נראה.
-- AutoAttack מתקבל רק כאשר אויב נמצא בקונוס הכוונת.
-- מודל reaction-time שמחייב לפחות 8 דגימות מהירות עם שונות נמוכה.
-- detector יחיד מוגבל בניקוד; ציון גבוה דורש ראיות מסוגים שונים.
-- `liveac_scan <player> <seconds>` מחזיר דוח רק לאדמין שהפעיל אותו.
-- אירועים ודוחות סריקה נכתבים ל־`addons/liveac/logs/panel_events.jsonl` עבור הפאנל.
+`liveac_scan` כבר לא מחזיר `CLEAN` רק מפני שלא נוצר אירוע. לכל קבוצת detector מוצגים מוני דגימות ומצב:
+
+- `PASS` — נאספו מספיק נתונים ולא נמצאה חריגה.
+- `WARNING` — נאספו מספיק נתונים ונמצאה ראיה.
+- `INSUFFICIENT` — לא היו מספיק מצבי משחק כדי לבדוק.
+
+הדוח כולל Aim, Fire, Movement ו־Speed וכן נכתב ל־`addons/liveac/logs/panel_events.jsonl`.
 
 ## פקודות
 
@@ -27,27 +25,20 @@ liveac_reset <slot|name|all>
 liveac_reload_admins
 ```
 
-## אדמין במשחק
+## אדמין
 
-הוסף SteamID, ללא מרכאות או flags, אל:
+הוסף SteamID, שורה אחת ללא מרכאות, אל:
 
 ```text
 cstrike/addons/liveac/liveac_admins.ini
 ```
 
-לדוגמה:
-
-```text
-STEAM_0:0:780558973
-```
-
-ואז הרץ `liveac_reload_admins` בקונסולת השרת או בצע restart.
+לאחר מכן הרץ `liveac_reload_admins` או הפעל מחדש את השרת.
 
 ## בנייה
 
-העלה את כל תוכן הפרויקט ל־GitHub והפעל את workflow בשם `Build Linux i386`.
-ה־artifact מכיל `live_unreal_scanner_mm_i386.so` וקובצי ההגדרות.
+העלה את כל הפרויקט ל־GitHub והפעל את workflow בשם `Build Linux i386`. הפלט הוא artifact בשם `live-unreal-scanner-v0.8.0-linux-i386`.
 
-## מגבלות
+## בטיחות
 
-זו מערכת התראה ובדיקת אדמין, לא הוכחה מוחלטת לרמאות. אין אפשרות להבטיח אחוז דיוק לפני כיול על מאגר גדול של שחקנים נקיים וצ'יטים. v0.7 מוסיפה הקשר מטרה ונראות כדי להפחית false positives, אך עדיין דורשת בדיקות שרת אמיתיות.
+המערכת מתריעה ושומרת ראיות בלבד. אין Ban/Kick אוטומטי. Speed כרגע הוא מדד דיווח שמרני (`>520` units/s במספר דגימות), ולא ראיה עצמאית לבאן.

@@ -28,6 +28,8 @@ int main() {
             if(!ev.empty()) found=true;
         }
         assert(!found && d.score()==0.0f);
+        assert(d.stats().total_samples == 20);
+        assert(d.stats().attack_edges > 0);
     }
 
     // Context-aware repeated target snaps + attack.
@@ -42,6 +44,8 @@ int main() {
             d.push(sample(t+=0.01,++c,0,yaw,true,0,true,1.0f,0.8f,true));
         }
         assert(found);
+        assert(d.stats().target_acquisitions > 0);
+        assert(d.stats().attacks_in_crosshair > 0);
     }
 
     // UDS IDEALJUMP adaptation remains active.
@@ -55,6 +59,8 @@ int main() {
             for(auto &e:ev) if(e.type=="UDS_IDEALJUMP_ADAPTED") found=true;
         }
         assert(found);
+        assert(d.stats().valid_landings >= 12);
+        assert(d.stats().ideal_jumps >= 12);
     }
 
     std::cout << "context detector tests passed\n";

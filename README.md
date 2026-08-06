@@ -43,7 +43,7 @@ cstrike/addons/liveac/liveac_admins.ini
 
 המערכת מתריעה ושומרת ראיות בלבד. אין Ban/Kick אוטומטי. Speed כרגע הוא מדד דיווח שמרני (`>520` units/s במספר דגימות), ולא ראיה עצמאית לבאן.
 
-## v1.0 hardening changes
+## v1.0.1 hardening changes
 
 Developed by **IDO** and released under the **MIT License**.
 

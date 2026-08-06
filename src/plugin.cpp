@@ -15,9 +15,9 @@
 plugin_info_t Plugin_info = {
     META_INTERFACE_VERSION,
     "Live Unreal Scanner",
-    "0.1.0",
+    "0.2.0",
     "2026-08-06",
-    "OpenAI-assisted prototype",
+    "Live adaptation with UnrealDemoScanner-derived detectors",
     "https://github.com/",
     "LIVEAC",
     PT_ANYTIME,
@@ -34,6 +34,7 @@ namespace {
 constexpr int MAX_CLIENTS_LOCAL = 32;
 std::array<std::unique_ptr<liveac::PlayerDetector>, MAX_CLIENTS_LOCAL + 1> detectors;
 std::array<float, MAX_CLIENTS_LOCAL + 1> last_alert{};
+std::array<std::uint64_t, MAX_CLIENTS_LOCAL + 1> cmd_sequence{};
 liveac::Config config;
 
 int player_index(edict_t* ent) { return ENTINDEX(ent); }
@@ -48,8 +49,8 @@ void log_evidence(int id, const liveac::Evidence& ev, float score) {
     const char* name = STRING(INDEXENT(id)->v.netname);
     char line[1024];
     std::snprintf(line, sizeof(line),
-        "[LiveAC] player=\"%s\" auth=\"%s\" type=%s score=%.1f time=%.3f details=\"%s\"\n",
-        name ? name : "unknown", auth ? auth : "unknown", ev.type.c_str(), score, ev.time, ev.details.c_str());
+        "[LiveAC] player=\"%s\" auth=\"%s\" type=%s level=%s score=%.1f time=%.3f details=\"%s\"\n",
+        name ? name : "unknown", auth ? auth : "unknown", ev.type.c_str(), ev.detection ? "DETECTED" : "WARNING", score, ev.time, ev.details.c_str());
     SERVER_PRINT(line);
     std::ofstream f("liveac_evidence.log", std::ios::app);
     if (f) f << line;
@@ -63,6 +64,7 @@ void CmdStart(edict_t* player, const usercmd_t* cmd, unsigned int) {
 
     liveac::Sample s;
     s.time = gpGlobals->time;
+    s.command_number = ++cmd_sequence[id];
     s.pitch = cmd->viewangles.x;
     s.yaw = cmd->viewangles.y;
     s.forwardmove = cmd->forwardmove;
@@ -90,13 +92,14 @@ qboolean ClientConnect(edict_t* ent, const char*, const char*, char[128]) {
     if (id >= 1 && id <= MAX_CLIENTS_LOCAL) {
         detectors[id] = std::make_unique<liveac::PlayerDetector>(config);
         last_alert[id] = 0.0f;
+        cmd_sequence[id] = 0;
     }
     RETURN_META_VALUE(MRES_IGNORED, TRUE);
 }
 
 void ClientDisconnect(edict_t* ent) {
     const int id = player_index(ent);
-    if (id >= 1 && id <= MAX_CLIENTS_LOCAL) detectors[id].reset();
+    if (id >= 1 && id <= MAX_CLIENTS_LOCAL) { detectors[id].reset(); cmd_sequence[id] = 0; }
     RETURN_META(MRES_IGNORED);
 }
 }

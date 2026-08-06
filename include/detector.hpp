@@ -27,6 +27,25 @@ struct Sample {
     float target_angle_error{180.0f};
     float previous_target_angle_error{180.0f};
     int weapon_id{};
+    float horizontal_speed{};
+};
+
+
+struct DetectorStats {
+    std::uint64_t total_samples{};
+    std::uint64_t visible_target_samples{};
+    std::uint64_t target_acquisitions{};
+    std::uint64_t attack_edges{};
+    std::uint64_t attacks_on_visible_target{};
+    std::uint64_t attacks_in_crosshair{};
+    std::uint64_t reaction_samples{};
+    std::uint64_t movement_samples{};
+    std::uint64_t jump_edges{};
+    std::uint64_t valid_landings{};
+    std::uint64_t ideal_jumps{};
+    std::uint64_t speed_samples{};
+    std::uint64_t speed_anomalies{};
+    float max_horizontal_speed{};
 };
 
 struct Evidence {
@@ -90,6 +109,7 @@ public:
     float score() const noexcept { return score_; }
     std::size_t detector_diversity() const noexcept { return active_types_.size(); }
     int idealjump_strikes() const noexcept { return idealjump_strikes_; }
+    const DetectorStats& stats() const noexcept { return stats_; }
     void reset();
 
 private:
@@ -124,6 +144,7 @@ private:
     double target_visible_since_{-1000.0};
     bool previous_target_visible_{};
     std::deque<float> reaction_samples_ms_;
+    DetectorStats stats_{};
 };
 
 } // namespace liveac

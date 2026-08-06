@@ -96,13 +96,22 @@ std::vector<Evidence> PlayerDetector::push(const Sample& s) {
         return out;
     }
 
+    ++stats_.total_samples;
+    ++stats_.movement_samples;
+    ++stats_.speed_samples;
+    stats_.max_horizontal_speed = std::max(stats_.max_horizontal_speed, s.horizontal_speed);
+    // Conservative reporting-only threshold. This does not add suspicion points.
+    if (s.horizontal_speed > 520.0f) ++stats_.speed_anomalies;
+
     const bool attack_now = (s.buttons & IN_ATTACK) != 0;
     const bool jump_now = (s.buttons & IN_JUMP) != 0;
+    if (s.target_visible) ++stats_.visible_target_samples;
 
     // Track first visibility/acquisition of a target for reaction-time evidence.
     if (s.target_visible && (!previous_target_visible_ || s.target_slot != last_target_slot_)) {
         target_visible_since_ = s.time;
         last_target_slot_ = s.target_slot;
+        ++stats_.target_acquisitions;
     }
 
     if (!history_.empty()) {
@@ -112,6 +121,13 @@ std::vector<Evidence> PlayerDetector::push(const Sample& s) {
         const float dy = std::fabs(angle_delta(s.yaw, p.yaw));
         const float distance = std::sqrt(dx*dx + dy*dy);
         const bool attack_edge = attack_now && ((p.buttons & IN_ATTACK) == 0);
+        if (attack_edge) {
+            ++stats_.attack_edges;
+            if (s.target_visible) ++stats_.attacks_on_visible_target;
+            if (s.target_in_crosshair) ++stats_.attacks_in_crosshair;
+        }
+        const bool jump_edge = jump_now && ((p.buttons & IN_JUMP) == 0);
+        if (jump_edge) ++stats_.jump_edges;
 
         // Context-aware snap: must be fast, end near a visible enemy and improve aim materially.
         const float improvement = s.previous_target_angle_error - s.target_angle_error;
@@ -120,7 +136,7 @@ std::vector<Evidence> PlayerDetector::push(const Sample& s) {
             improvement >= cfg_.target_snap_improvement_degrees) {
             last_snap_time_ = s.time;
             ++target_snap_strikes_;
-        } else if (distance < cfg_.snap_min_degrees * 0.5f) {
+        } else if (!s.target_visible) {
             target_snap_strikes_ = std::max(0, target_snap_strikes_ - 1);
         }
         if (attack_edge && s.target_visible && s.target_angle_error <= cfg_.target_lock_degrees &&
@@ -180,6 +196,7 @@ std::vector<Evidence> PlayerDetector::push(const Sample& s) {
             const float reaction=static_cast<float>((s.time-target_visible_since_)*1000.0);
             if (reaction>=0.0f && reaction<=500.0f) {
                 reaction_samples_ms_.push_back(reaction);
+                ++stats_.reaction_samples;
                 while (reaction_samples_ms_.size()>16) reaction_samples_ms_.pop_front();
                 if (static_cast<int>(reaction_samples_ms_.size())>=cfg_.reaction_min_samples) {
                     const float med=median(reaction_samples_ms_); const float sd=stddev(reaction_samples_ms_);
@@ -200,13 +217,14 @@ std::vector<Evidence> PlayerDetector::push(const Sample& s) {
     if (!s.on_ground) ++airborne_frames_;
     const bool landed=s.on_ground && !previous_on_ground_;
     const bool took_off=!s.on_ground && previous_on_ground_;
-    if (landed) { search_next_jump_=airborne_frames_>cfg_.uds_idealjump_air_frames; airborne_frames_=0; }
+    if (landed) { ++stats_.valid_landings; search_next_jump_=airborne_frames_>cfg_.uds_idealjump_air_frames; airborne_frames_=0; }
     if (search_next_jump_ && took_off) {
         search_next_jump_=false;
         const bool edge=jump_now && !previous_jump_;
         const double since=history_.empty()?999.0:s.time-history_.back().time;
         if (edge && since<=cfg_.uds_idealjump_window_seconds) {
             ++idealjump_strikes_;
+            ++stats_.ideal_jumps;
             if (idealjump_strikes_>cfg_.uds_idealjump_max_strikes) {
                 add(out,s,"UDS_IDEALJUMP_ADAPTED",cfg_.uds_idealjump_weight,
                     "more than 11 consecutive ideal jumps after >10 airborne frames",true);
@@ -228,6 +246,6 @@ void PlayerDetector::reset() {
     last_tiny_angle_time_=-1000.0; previous_on_ground_=false; previous_jump_=false; airborne_frames_=0;
     search_next_jump_=false; idealjump_strikes_=0; aim5_tiny_strikes_=0; snap_attack_count_=0;
     last_attack_cmd_=0; autoattack_strikes_=0; target_snap_strikes_=0; last_target_slot_=0;
-    target_visible_since_=-1000.0; previous_target_visible_=false;
+    target_visible_since_=-1000.0; previous_target_visible_=false; stats_ = {};
 }
 } // namespace liveac

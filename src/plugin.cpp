@@ -33,7 +33,7 @@
 plugin_info_t Plugin_info = {
     META_INTERFACE_VERSION,
     "Live Unreal Scanner",
-    "0.7.0",
+    "0.8.0",
     "2026-08-06",
     "Live adaptation with UnrealDemoScanner-derived detectors",
     "https://github.com/",
@@ -70,6 +70,7 @@ std::array<double, MAX_CLIENTS_LOCAL + 1> scan_ends{};
 std::array<float, MAX_CLIENTS_LOCAL + 1> scan_start_score{};
 std::array<unsigned int, MAX_CLIENTS_LOCAL + 1> scan_start_evidence{};
 std::array<std::map<std::string, unsigned int>, MAX_CLIENTS_LOCAL + 1> scan_start_types;
+std::array<liveac::DetectorStats, MAX_CLIENTS_LOCAL + 1> scan_start_stats{};
 std::array<int, MAX_CLIENTS_LOCAL + 1> scan_requester{};
 
 std::array<bool, MAX_CLIENTS_LOCAL + 1> watch_active{};
@@ -163,6 +164,7 @@ void clear_scan(int id) {
     scan_start_score[id] = 0.0f;
     scan_start_evidence[id] = 0;
     scan_start_types[id].clear();
+    scan_start_stats[id] = {};
     scan_requester[id] = 0;
 }
 
@@ -264,8 +266,9 @@ int command_target(int argument_index = 1) {
     return 0;
 }
 
-std::string verdict(float score, unsigned int new_evidence) {
-    if (new_evidence == 0 && score < 30.0f) return "CLEAN / NO EVIDENCE";
+std::string verdict(float score, unsigned int new_evidence, bool enough_data = true) {
+    if (!enough_data) return "NOT ENOUGH DATA";
+    if (new_evidence == 0 && score < 30.0f) return "CLEAN";
     if (score >= 75.0f) return "HIGHLY SUSPICIOUS";
     if (score >= 55.0f) return "SUSPICIOUS";
     if (score >= 30.0f) return "REVIEW RECOMMENDED";
@@ -277,34 +280,77 @@ void print_scan_report(int id, edict_t* receiver) {
     const unsigned int new_evidence = evidence_count[id] - scan_start_evidence[id];
     const float current_score = detectors[id]->score();
     const double elapsed = gpGlobals ? gpGlobals->time - scan_started[id] : 0.0;
+    const auto& now = detectors[id]->stats();
+    const auto& before = scan_start_stats[id];
+    auto delta = [](std::uint64_t a, std::uint64_t b) { return a >= b ? a - b : 0; };
+
+    const auto samples = delta(now.total_samples, before.total_samples);
+    const auto visible = delta(now.visible_target_samples, before.visible_target_samples);
+    const auto acquisitions = delta(now.target_acquisitions, before.target_acquisitions);
+    const auto attacks = delta(now.attack_edges, before.attack_edges);
+    const auto attacks_visible = delta(now.attacks_on_visible_target, before.attacks_on_visible_target);
+    const auto attacks_crosshair = delta(now.attacks_in_crosshair, before.attacks_in_crosshair);
+    const auto reactions = delta(now.reaction_samples, before.reaction_samples);
+    const auto jumps = delta(now.jump_edges, before.jump_edges);
+    const auto landings = delta(now.valid_landings, before.valid_landings);
+    const auto ideal = delta(now.ideal_jumps, before.ideal_jumps);
+    const auto speed_samples = delta(now.speed_samples, before.speed_samples);
+    const auto speed_anomalies = delta(now.speed_anomalies, before.speed_anomalies);
+
+    auto event_delta = [&](const char* type) -> unsigned int {
+        unsigned int current = 0, old = 0;
+        auto it = evidence_types[id].find(type); if (it != evidence_types[id].end()) current = it->second;
+        auto jt = scan_start_types[id].find(type); if (jt != scan_start_types[id].end()) old = jt->second;
+        return current >= old ? current - old : 0;
+    };
+    const unsigned int aim_events = event_delta("TARGET_AIM_SNAP") + event_delta("UDS_AIM_TYPE_5_CONTEXT") + event_delta("TARGET_REACTION_PATTERN");
+    const unsigned int fire_events = event_delta("UDS_AUTOATTACK_CONTEXT");
+    const unsigned int movement_events = event_delta("UDS_IDEALJUMP_ADAPTED");
+
+    auto result = [](bool enough, bool warning) { return !enough ? "INSUFFICIENT" : (warning ? "WARNING" : "PASS"); };
+    const bool aim_enough = acquisitions >= 8 && visible >= 80;
+    const bool fire_enough = attacks >= 20 && attacks_visible >= 5;
+    const bool movement_enough = landings >= 8 && jumps >= 8;
+    const bool speed_enough = speed_samples >= 300;
+    const bool aim_warning = aim_events > 0;
+    const bool fire_warning = fire_events > 0;
+    const bool movement_warning = movement_events > 0 || (ideal >= 10 && landings >= 10);
+    const bool speed_warning = speed_anomalies >= 3;
+    const bool enough_overall = samples >= 300 && (aim_enough || fire_enough || movement_enough || speed_enough);
 
     std::ostringstream out;
     out << "\n========== LiveAC Scan Report ==========\n"
         << "Player: " << player_name(id) << " (#" << id << ")\n"
         << "SteamID: " << (GETPLAYERAUTHID(INDEXENT(id)) ? GETPLAYERAUTHID(INDEXENT(id)) : "unknown") << "\n"
-        << "Duration: " << static_cast<int>(elapsed) << " seconds\n"
+        << "Duration: " << static_cast<int>(elapsed) << " seconds | Samples: " << samples << "\n\n"
+        << "AIM [" << result(aim_enough, aim_warning) << "]\n"
+        << "  Visible target samples: " << visible << "\n"
+        << "  Target acquisitions: " << acquisitions << "\n"
+        << "  Reaction samples: " << reactions << "\n"
+        << "  Aim detector events: " << aim_events << "\n\n"
+        << "FIRE [" << result(fire_enough, fire_warning) << "]\n"
+        << "  Attack edges: " << attacks << "\n"
+        << "  Attacks on visible target: " << attacks_visible << "\n"
+        << "  Attacks in crosshair: " << attacks_crosshair << "\n"
+        << "  Fire detector events: " << fire_events << "\n\n"
+        << "MOVEMENT [" << result(movement_enough, movement_warning) << "]\n"
+        << "  Jump edges: " << jumps << "\n"
+        << "  Valid landings: " << landings << "\n"
+        << "  Ideal jumps: " << ideal << "\n"
+        << "  Movement detector events: " << movement_events << "\n\n"
+        << "SPEED [" << result(speed_enough, speed_warning) << "]\n"
+        << "  Speed samples: " << speed_samples << "\n"
+        << "  Maximum horizontal speed: " << now.max_horizontal_speed << "\n"
+        << "  Extreme speed anomalies (>520): " << speed_anomalies << "\n\n"
         << "Score: " << static_cast<int>(current_score) << "/100"
-        << " | detector diversity: " << detectors[id]->detector_diversity()
-        << " (started at " << static_cast<int>(scan_start_score[id]) << ")\n"
-        << "New evidence: " << new_evidence << "\n";
-
-    bool any_type = false;
-    for (const auto& item : evidence_types[id]) {
-        unsigned int before = 0;
-        const auto previous = scan_start_types[id].find(item.first);
-        if (previous != scan_start_types[id].end()) before = previous->second;
-        if (item.second > before) {
-            out << "  " << item.first << ": " << (item.second - before) << "\n";
-            any_type = true;
-        }
-    }
-    if (!any_type) out << "  No detector events during this scan.\n";
-    out << "Verdict: " << verdict(current_score, new_evidence) << "\n"
-        << "Note: LiveAC provides evidence for manual review; it does not auto-ban.\n"
+        << " | detector diversity: " << detectors[id]->detector_diversity() << "\n"
+        << "New evidence: " << new_evidence << "\n"
+        << "Verdict: " << verdict(current_score, new_evidence, enough_overall) << "\n"
+        << "Note: INSUFFICIENT means the detector did not receive enough valid situations; it is not PASS.\n"
+        << "LiveAC provides evidence for manual review and never auto-bans.\n"
         << "========================================\n";
     print_to(receiver, out.str());
 
-    // Panel-consumable scan summary. The in-game report remains private to the requester.
     char game_dir[256]{};
     GET_GAME_DIR(game_dir);
     const std::string log_dir = std::string(game_dir) + "/addons/liveac/logs";
@@ -316,14 +362,15 @@ void print_scan_report(int id, edict_t* receiver) {
               << ",\"slot\":" << id
               << ",\"player\":\"" << player_name(id) << "\""
               << ",\"auth\":\"" << (GETPLAYERAUTHID(INDEXENT(id)) ? GETPLAYERAUTHID(INDEXENT(id)) : "unknown") << "\""
-              << ",\"duration\":" << elapsed
-              << ",\"score\":" << current_score
-              << ",\"new_evidence\":" << new_evidence
-              << ",\"detector_diversity\":" << detectors[id]->detector_diversity()
-              << ",\"verdict\":\"" << verdict(current_score, new_evidence) << "\"}\n";
+              << ",\"duration\":" << elapsed << ",\"samples\":" << samples
+              << ",\"score\":" << current_score << ",\"new_evidence\":" << new_evidence
+              << ",\"aim\":{\"status\":\"" << result(aim_enough, aim_warning) << "\",\"visible_samples\":" << visible << ",\"acquisitions\":" << acquisitions << ",\"reaction_samples\":" << reactions << ",\"events\":" << aim_events << "}"
+              << ",\"fire\":{\"status\":\"" << result(fire_enough, fire_warning) << "\",\"attacks\":" << attacks << ",\"visible_attacks\":" << attacks_visible << ",\"crosshair_attacks\":" << attacks_crosshair << ",\"events\":" << fire_events << "}"
+              << ",\"movement\":{\"status\":\"" << result(movement_enough, movement_warning) << "\",\"jumps\":" << jumps << ",\"landings\":" << landings << ",\"ideal_jumps\":" << ideal << ",\"events\":" << movement_events << "}"
+              << ",\"speed\":{\"status\":\"" << result(speed_enough, speed_warning) << "\",\"samples\":" << speed_samples << ",\"max\":" << now.max_horizontal_speed << ",\"anomalies\":" << speed_anomalies << "}"
+              << ",\"verdict\":\"" << verdict(current_score, new_evidence, enough_overall) << "\"}\n";
     }
 }
-
 void finish_scan(int id) {
     if (!scan_active[id]) return;
     edict_t* receiver = active_player(scan_requester[id]) ? INDEXENT(scan_requester[id]) : nullptr;
@@ -381,6 +428,7 @@ void command_scan(edict_t* caller) {
     scan_start_score[target] = detectors[target]->score();
     scan_start_evidence[target] = evidence_count[target];
     scan_start_types[target] = evidence_types[target];
+    scan_start_stats[target] = detectors[target]->stats();
     scan_requester[target] = caller ? player_index(caller) : 0;
 
     char message[384];
@@ -570,6 +618,7 @@ void CmdStart(const edict_t* player, const usercmd_s* cmd, unsigned int) {
     sample.alive = player->v.deadflag == DEAD_NO && player->v.health > 0.0f;
     if (cmd->weaponselect > 0) current_weapon[id] = cmd->weaponselect;
     sample.weapon_id = current_weapon[id];
+    sample.horizontal_speed = std::sqrt(player->v.velocity.x * player->v.velocity.x + player->v.velocity.y * player->v.velocity.y);
 
     const TargetContext context = target_context(player, cmd);
     sample.target_slot = context.slot;
@@ -658,7 +707,7 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME, META_FUNCTIONS* metaFunctionTable,
     g_engfuncs.pfnAddServerCommand("liveac_reload_admins", ServerCommandReloadAdmins);
 
     load_admins();
-    SERVER_PRINT("[LiveAC] v0.7 loaded. Context-aware target analysis active; bots ignored; manual reports private.\n");
+    SERVER_PRINT("[LiveAC] v0.8 loaded. Context-aware target analysis active; bots ignored; manual reports private.\n");
     return TRUE;
 }
 

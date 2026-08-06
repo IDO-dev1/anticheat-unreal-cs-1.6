@@ -1,4 +1,4 @@
-# התקנה — Live Unreal Scanner v0.2
+# התקנה — Live Unreal Scanner v0.1
 
 1. העלה את תיקיית הפרויקט ל־GitHub.
 2. פתח Actions והרץ `Build Linux Metamod SO`.

@@ -33,7 +33,7 @@
 plugin_info_t Plugin_info = {
     META_INTERFACE_VERSION,
     "Live Unreal Scanner",
-    "0.6.0",
+    "0.7.0",
     "2026-08-06",
     "Live adaptation with UnrealDemoScanner-derived detectors",
     "https://github.com/",
@@ -57,6 +57,8 @@ constexpr int MAX_SCAN_SECONDS = 300;
 std::array<std::unique_ptr<liveac::PlayerDetector>, MAX_CLIENTS_LOCAL + 1> detectors;
 std::array<float, MAX_CLIENTS_LOCAL + 1> last_alert{};
 std::array<std::uint64_t, MAX_CLIENTS_LOCAL + 1> cmd_sequence{};
+std::array<float, MAX_CLIENTS_LOCAL + 1> previous_target_error{};
+std::array<int, MAX_CLIENTS_LOCAL + 1> current_weapon{};
 std::array<unsigned int, MAX_CLIENTS_LOCAL + 1> evidence_count{};
 std::array<std::string, MAX_CLIENTS_LOCAL + 1> last_evidence_type{};
 std::array<double, MAX_CLIENTS_LOCAL + 1> last_evidence_time{};
@@ -169,6 +171,8 @@ void reset_player(int id) {
     detectors[id] = std::make_unique<liveac::PlayerDetector>(config);
     last_alert[id] = 0.0f;
     cmd_sequence[id] = 0;
+    previous_target_error[id] = 180.0f;
+    current_weapon[id] = 0;
     evidence_count[id] = 0;
     last_evidence_type[id].clear();
     last_evidence_time[id] = 0.0;
@@ -299,6 +303,25 @@ void print_scan_report(int id, edict_t* receiver) {
         << "Note: LiveAC provides evidence for manual review; it does not auto-ban.\n"
         << "========================================\n";
     print_to(receiver, out.str());
+
+    // Panel-consumable scan summary. The in-game report remains private to the requester.
+    char game_dir[256]{};
+    GET_GAME_DIR(game_dir);
+    const std::string log_dir = std::string(game_dir) + "/addons/liveac/logs";
+    std::string mkdir_cmd = "mkdir -p \"" + log_dir + "\"";
+    std::system(mkdir_cmd.c_str());
+    std::ofstream panel(log_dir + "/panel_events.jsonl", std::ios::app);
+    if (panel) {
+        panel << "{\"event\":\"scan_report\",\"time\":" << (gpGlobals ? gpGlobals->time : 0.0)
+              << ",\"slot\":" << id
+              << ",\"player\":\"" << player_name(id) << "\""
+              << ",\"auth\":\"" << (GETPLAYERAUTHID(INDEXENT(id)) ? GETPLAYERAUTHID(INDEXENT(id)) : "unknown") << "\""
+              << ",\"duration\":" << elapsed
+              << ",\"score\":" << current_score
+              << ",\"new_evidence\":" << new_evidence
+              << ",\"detector_diversity\":" << detectors[id]->detector_diversity()
+              << ",\"verdict\":\"" << verdict(current_score, new_evidence) << "\"}\n";
+    }
 }
 
 void finish_scan(int id) {
@@ -460,6 +483,74 @@ void ServerCommandTop() { execute_command(nullptr, "liveac_top"); }
 void ServerCommandReset() { execute_command(nullptr, "liveac_reset"); }
 void ServerCommandReloadAdmins() { execute_command(nullptr, "liveac_reload_admins"); }
 
+
+struct TargetContext {
+    int slot{};
+    bool visible{};
+    bool in_crosshair{};
+    float angle_error{180.0f};
+};
+
+float normalize_angle(float value) {
+    while (value > 180.0f) value -= 360.0f;
+    while (value < -180.0f) value += 360.0f;
+    return value;
+}
+
+float angular_error_to(const edict_t* viewer, const edict_t* target, const usercmd_s* cmd) {
+    const float sx = viewer->v.origin.x + viewer->v.view_ofs.x;
+    const float sy = viewer->v.origin.y + viewer->v.view_ofs.y;
+    const float sz = viewer->v.origin.z + viewer->v.view_ofs.z;
+    const float tx = target->v.origin.x + target->v.view_ofs.x;
+    const float ty = target->v.origin.y + target->v.view_ofs.y;
+    const float tz = target->v.origin.z + target->v.view_ofs.z;
+    const float dx = tx - sx, dy = ty - sy, dz = tz - sz;
+    const float flat = std::sqrt(dx * dx + dy * dy);
+    constexpr float RAD_TO_DEG = 57.29577951308232f;
+    const float target_yaw = std::atan2(dy, dx) * RAD_TO_DEG;
+    const float target_pitch = -std::atan2(dz, flat) * RAD_TO_DEG;
+    const float yaw_error = normalize_angle(target_yaw - cmd->viewangles.y);
+    const float pitch_error = normalize_angle(target_pitch - cmd->viewangles.x);
+    return std::sqrt(yaw_error * yaw_error + pitch_error * pitch_error);
+}
+
+bool visible_to(const edict_t* viewer, edict_t* target) {
+    float start[3] = {
+        viewer->v.origin.x + viewer->v.view_ofs.x,
+        viewer->v.origin.y + viewer->v.view_ofs.y,
+        viewer->v.origin.z + viewer->v.view_ofs.z
+    };
+    float end[3] = {
+        target->v.origin.x + target->v.view_ofs.x,
+        target->v.origin.y + target->v.view_ofs.y,
+        target->v.origin.z + target->v.view_ofs.z
+    };
+    TraceResult tr{};
+    g_engfuncs.pfnTraceLine(start, end, dont_ignore_monsters, const_cast<edict_t*>(viewer), &tr);
+    return tr.pHit == target || tr.flFraction >= 0.999f;
+}
+
+TargetContext target_context(const edict_t* viewer, const usercmd_s* cmd) {
+    TargetContext result;
+    const int viewer_team = viewer->v.team;
+    for (int slot = 1; slot <= MAX_CLIENTS_LOCAL; ++slot) {
+        if (!active_player(slot) || slot == player_index(viewer) || is_bot(slot)) continue;
+        edict_t* candidate = INDEXENT(slot);
+        if (candidate->v.deadflag != DEAD_NO || candidate->v.health <= 0.0f) continue;
+        if (viewer_team > 0 && candidate->v.team == viewer_team) continue;
+        const float error = angular_error_to(viewer, candidate, cmd);
+        if (error >= result.angle_error || error > 35.0f) continue;
+        if (!visible_to(viewer, candidate)) continue;
+        result.slot = slot;
+        result.visible = true;
+        result.angle_error = error;
+    }
+
+    // A narrow angular cone is more stable than relying solely on a trace hitting a hitbox.
+    result.in_crosshair = result.visible && result.angle_error <= 1.25f;
+    return result;
+}
+
 void CmdStart(const edict_t* player, const usercmd_s* cmd, unsigned int) {
     if (!player || !cmd || player->free) RETURN_META(MRES_IGNORED);
     const int id = player_index(player);
@@ -477,6 +568,16 @@ void CmdStart(const edict_t* player, const usercmd_s* cmd, unsigned int) {
     sample.buttons = static_cast<std::uint32_t>(cmd->buttons);
     sample.on_ground = (player->v.flags & FL_ONGROUND) != 0;
     sample.alive = player->v.deadflag == DEAD_NO && player->v.health > 0.0f;
+    if (cmd->weaponselect > 0) current_weapon[id] = cmd->weaponselect;
+    sample.weapon_id = current_weapon[id];
+
+    const TargetContext context = target_context(player, cmd);
+    sample.target_slot = context.slot;
+    sample.target_visible = context.visible;
+    sample.target_in_crosshair = context.in_crosshair;
+    sample.target_angle_error = context.angle_error;
+    sample.previous_target_angle_error = previous_target_error[id];
+    previous_target_error[id] = context.visible ? context.angle_error : 180.0f;
 
     const auto evidence = detectors[id]->push(sample);
     for (const auto& item : evidence) log_evidence(id, item, detectors[id]->score());
@@ -506,6 +607,8 @@ void ClientDisconnect(edict_t* ent) {
         if (scan_active[id]) finish_scan(id);
         detectors[id].reset();
         cmd_sequence[id] = 0;
+    previous_target_error[id] = 180.0f;
+    current_weapon[id] = 0;
         evidence_count[id] = 0;
         evidence_types[id].clear();
         last_evidence_type[id].clear();
@@ -555,7 +658,7 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME, META_FUNCTIONS* metaFunctionTable,
     g_engfuncs.pfnAddServerCommand("liveac_reload_admins", ServerCommandReloadAdmins);
 
     load_admins();
-    SERVER_PRINT("[LiveAC] v0.6 loaded. Human players are analyzed automatically; manual scan reports are private to requester.\n");
+    SERVER_PRINT("[LiveAC] v0.7 loaded. Context-aware target analysis active; bots ignored; manual reports private.\n");
     return TRUE;
 }
 

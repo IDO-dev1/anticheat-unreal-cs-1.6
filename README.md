@@ -1,25 +1,50 @@
-# Live Unreal Scanner for CS 1.6
+# Live Unreal Scanner v0.2
 
-Prototype live anti-cheat detector for HLDS/ReHLDS, inspired by the measurement approach of demo scanners. It is an independent implementation and does not include UnrealDemoScanner source code.
+Metamod anti-cheat research plugin for CS 1.6/ReHLDS. It analyzes player `usercmd` data
+live inside the server without Python, HTTP or blocking network requests.
 
-## v0.1 detectors
+## Does this version really use UnrealDemoScanner logic?
 
-- Large aim-angle snap in a very short command interval.
-- Repeated attack immediately after a snap.
-- Repeated jump command exactly on landing.
-- Per-player score with time decay.
-- Console alerts and evidence log.
+Yes, **v0.2 contains live adaptations of selected algorithms/constants from the actual
+UnrealDemoScanner 1.76.0 source**. It is not the original `.dem` scanner running inside
+HLDS; the original is C# and expects demo frames. The adapted detectors are clearly named:
 
-## Safety/performance
+- `UDS_AIM_TYPE_5_ADAPTED`
+- `UDS_IDEALJUMP_ADAPTED`
+- `UDS_AUTOATTACK_ADAPTED` (experimental warning)
 
-The Metamod callback performs bounded in-memory arithmetic only. There is no network request, Python dependency, sleeping, waiting, or automatic punishment.
+See `THIRD_PARTY.md` for exact adaptation notes and attribution.
 
-## Build through GitHub
+## Safety
 
-Push this repository to GitHub and run **Actions → Build Linux Metamod SO**. The workflow installs a 32-bit compiler, fetches the official HLSDK and Metamod-HL1 headers, compiles the `.so`, runs a detector test, and uploads a packaged artifact.
+- No automatic ban or kick.
+- No Python or external API.
+- No socket/HTTP call from the game thread.
+- Evidence is logged as `WARNING` or `DETECTED`.
+- Results must be manually reviewed while thresholds are calibrated.
 
-See `docs/INSTALL_HE.md`.
+## GitHub build
 
-## Scope
+1. Upload this folder to a GitHub repository.
+2. Open **Actions**.
+3. Run **Build Linux Metamod SO**.
+4. Download artifact `live-unreal-scanner-linux-i386`.
+5. Extract `live_unreal_scanner_mm_i386.so`.
 
-This initial release is suitable for telemetry and threshold calibration. Accurate triggerbot/hitbox and wallhack analysis will require server-side traces, weapon timing, target visibility and labelled clean/cheat samples.
+## Install
+
+Copy to:
+
+`cstrike/addons/liveac/dlls/live_unreal_scanner_mm_i386.so`
+
+Add to `cstrike/addons/metamod/plugins.ini`:
+
+`linux addons/liveac/dlls/live_unreal_scanner_mm_i386.so`
+
+Restart and check `meta list`.
+
+## Current limitations
+
+v0.2 has no hitbox/visibility traces, recoil punch data, weapon private-data timing or
+client-side sensitivity value. Therefore it is an evidence collector, not a final verdict
+engine. The next useful step is ReGameDLL/ReAPI weapon timing plus hitbox-aware aim events.

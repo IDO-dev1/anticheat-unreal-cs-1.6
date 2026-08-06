@@ -8,6 +8,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <cerrno>
+#include <ctime>
+#include <iomanip>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <map>
 #include <memory>
 #include <set>
@@ -33,9 +38,9 @@
 plugin_info_t Plugin_info = {
     META_INTERFACE_VERSION,
     "Live Unreal Scanner",
-    "0.8.0",
+    "1.0.0",
     "2026-08-06",
-    "Live adaptation with UnrealDemoScanner-derived detectors",
+    "Behavioral anti-cheat developed by IDO",
     "https://github.com/",
     "LIVEAC",
     PT_ANYTIME,
@@ -79,6 +84,10 @@ std::array<int, MAX_CLIENTS_LOCAL + 1> watch_requester{};
 std::set<std::string> admin_steamids;
 std::string admins_file_path;
 liveac::Config config;
+std::string liveac_base_dir;
+std::string liveac_log_dir;
+std::string config_file_path;
+constexpr std::size_t LOG_ROTATE_BYTES = 25u * 1024u * 1024u;
 
 int player_index(const edict_t* ent) { return ENTINDEX(const_cast<edict_t*>(ent)); }
 
@@ -94,11 +103,168 @@ bool is_bot(int id) {
     return auth && std::strcmp(auth, "BOT") == 0;
 }
 
+std::string player_name(int id);
+void reset_player(int id);
+
 std::string trim(std::string value) {
     const auto first = value.find_first_not_of(" \t\r\n");
     if (first == std::string::npos) return {};
     const auto last = value.find_last_not_of(" \t\r\n");
     return value.substr(first, last - first + 1);
+}
+
+
+std::string lowercase(std::string value) {
+    for (char& c : value) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return value;
+}
+
+std::string json_escape(const std::string& input) {
+    std::ostringstream out;
+    for (unsigned char ch : input) {
+        switch (ch) {
+            case '"': out << "\\\""; break;
+            case '\\': out << "\\\\"; break;
+            case '\b': out << "\\b"; break;
+            case '\f': out << "\\f"; break;
+            case '\n': out << "\\n"; break;
+            case '\r': out << "\\r"; break;
+            case '\t': out << "\\t"; break;
+            default:
+                if (ch < 0x20) {
+                    out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                        << static_cast<int>(ch) << std::dec << std::setfill(' ');
+                } else {
+                    out << static_cast<char>(ch);
+                }
+        }
+    }
+    return out.str();
+}
+
+std::string text_escape(std::string input) {
+    for (char& c : input) {
+        if (c == '\n' || c == '\r' || c == '\t' || static_cast<unsigned char>(c) < 0x20) c = ' ';
+    }
+    return input;
+}
+
+bool ensure_directory(const std::string& path) {
+    if (::mkdir(path.c_str(), 0755) == 0 || errno == EEXIST) return true;
+    return false;
+}
+
+void rotate_if_needed(const std::string& path) {
+    struct stat st{};
+    if (::stat(path.c_str(), &st) != 0 || static_cast<std::size_t>(st.st_size) < LOG_ROTATE_BYTES) return;
+    const std::string backup = path + ".1";
+    std::remove(backup.c_str());
+    std::rename(path.c_str(), backup.c_str());
+}
+
+std::string auth_id(int id) {
+    if (!active_player(id)) return "unknown";
+    const char* raw = GETPLAYERAUTHID(INDEXENT(id));
+    return raw ? raw : "unknown";
+}
+
+void audit_action(edict_t* caller, const std::string& action, const std::string& target = "") {
+    if (liveac_log_dir.empty()) return;
+    rotate_if_needed(liveac_log_dir + "/admin_audit.log");
+    std::ofstream file(liveac_log_dir + "/admin_audit.log", std::ios::app);
+    if (!file) return;
+    const int slot = caller ? player_index(caller) : 0;
+    const std::string name = caller ? text_escape(player_name(slot)) : "SERVER/RCON";
+    const std::string auth = caller ? auth_id(slot) : "SERVER";
+    file << "time=" << (gpGlobals ? gpGlobals->time : 0.0)
+         << " admin=\"" << name << "\" auth=\"" << text_escape(auth)
+         << "\" action=\"" << text_escape(action) << "\" target=\""
+         << text_escape(target) << "\"\n";
+}
+
+bool parse_bool(const std::string& value, bool& out) {
+    const std::string v = lowercase(trim(value));
+    if (v == "1" || v == "true" || v == "yes" || v == "on") { out = true; return true; }
+    if (v == "0" || v == "false" || v == "no" || v == "off") { out = false; return true; }
+    return false;
+}
+
+template <typename T>
+bool parse_number(const std::string& value, T& out) {
+    std::istringstream in(value);
+    T parsed{};
+    in >> parsed;
+    if (!in || !in.eof()) return false;
+    out = parsed;
+    return true;
+}
+
+bool apply_config_value(liveac::Config& cfg, const std::string& key, const std::string& value) {
+#define LIVEAC_FLOAT(name) if (key == #name) return parse_number(value, cfg.name)
+#define LIVEAC_INT(name) if (key == #name) return parse_number(value, cfg.name)
+    LIVEAC_FLOAT(snap_min_degrees); LIVEAC_FLOAT(snap_max_seconds); LIVEAC_FLOAT(snap_weight);
+    LIVEAC_FLOAT(attack_after_snap_seconds); LIVEAC_FLOAT(snap_attack_weight);
+    LIVEAC_FLOAT(target_lock_degrees); LIVEAC_FLOAT(target_snap_improvement_degrees);
+    LIVEAC_INT(target_snap_required_strikes); LIVEAC_INT(uds_sensitivity_history);
+    LIVEAC_FLOAT(uds_min_sens_detected); LIVEAC_FLOAT(uds_min_sens_warning);
+    LIVEAC_FLOAT(uds_min_playable_sens); LIVEAC_FLOAT(uds_aim5_attack_window);
+    LIVEAC_INT(uds_aim5_warning_strikes); LIVEAC_FLOAT(uds_aim5_weight);
+    LIVEAC_INT(uds_idealjump_air_frames); LIVEAC_FLOAT(uds_idealjump_window_seconds);
+    LIVEAC_INT(uds_idealjump_max_strikes); LIVEAC_FLOAT(uds_idealjump_weight);
+    LIVEAC_INT(uds_autoattack_min_cmd_gap); LIVEAC_INT(uds_autoattack_max_cmd_gap);
+    LIVEAC_INT(uds_autoattack_strikes); LIVEAC_FLOAT(uds_autoattack_weight);
+    LIVEAC_INT(reaction_min_samples); LIVEAC_FLOAT(reaction_fast_ms);
+    LIVEAC_FLOAT(reaction_median_ms); LIVEAC_FLOAT(reaction_stddev_ms);
+    LIVEAC_FLOAT(reaction_weight); LIVEAC_FLOAT(alert_score); LIVEAC_FLOAT(high_score);
+    LIVEAC_FLOAT(decay_per_second); LIVEAC_FLOAT(evidence_cooldown);
+#undef LIVEAC_FLOAT
+#undef LIVEAC_INT
+    return false;
+}
+
+bool load_config() {
+    liveac::Config loaded{};
+    std::ifstream file(config_file_path);
+    if (!file) {
+        SERVER_PRINT("[LiveAC][CFG] liveac.cfg not found; using compiled defaults.\n");
+        config = loaded;
+        return false;
+    }
+    std::string line;
+    unsigned int line_no = 0, loaded_count = 0;
+    while (std::getline(file, line)) {
+        ++line_no;
+        const auto comment = line.find_first_of(";#");
+        const auto slash_comment = line.find("//");
+        std::size_t cut = std::string::npos;
+        if (comment != std::string::npos) cut = comment;
+        if (slash_comment != std::string::npos) cut = std::min(cut, slash_comment);
+        if (cut != std::string::npos) line.erase(cut);
+        line = trim(line);
+        if (line.empty()) continue;
+        const auto equals = line.find('=');
+        if (equals == std::string::npos) {
+            char message[256];
+            std::snprintf(message, sizeof(message), "[LiveAC][CFG] line %u: expected key=value.\n", line_no);
+            SERVER_PRINT(message);
+            continue;
+        }
+        const std::string key = trim(line.substr(0, equals));
+        const std::string value = trim(line.substr(equals + 1));
+        if (!apply_config_value(loaded, key, value)) {
+            char message[320];
+            std::snprintf(message, sizeof(message), "[LiveAC][CFG] line %u: unknown key or invalid value '%s'.\n", line_no, key.c_str());
+            SERVER_PRINT(message);
+            continue;
+        }
+        ++loaded_count;
+    }
+    config = loaded;
+    for (int id = 1; id <= MAX_CLIENTS_LOCAL; ++id) if (detectors[id]) reset_player(id);
+    char message[256];
+    std::snprintf(message, sizeof(message), "[LiveAC][CFG] Loaded %u setting(s). Active detectors reset.\n", loaded_count);
+    SERVER_PRINT(message);
+    return true;
 }
 
 void print_to(edict_t* receiver, const std::string& text) {
@@ -191,30 +357,33 @@ std::string player_name(int id) {
 }
 
 void log_evidence(int id, const liveac::Evidence& ev, float score) {
-    const char* auth = GETPLAYERAUTHID(INDEXENT(id));
+    const std::string auth = auth_id(id);
     const std::string name = player_name(id);
+    const std::string safe_name = text_escape(name);
+    const std::string safe_auth = text_escape(auth);
+    const std::string safe_type = text_escape(ev.type);
+    const std::string safe_details = text_escape(ev.details);
     char line[1024];
     std::snprintf(line, sizeof(line),
         "[LiveAC] player=\"%s\" auth=\"%s\" type=%s level=%s score=%.1f time=%.3f details=\"%s\"\n",
-        name.c_str(), auth ? auth : "unknown", ev.type.c_str(),
-        ev.detection ? "DETECTED" : "WARNING", score, ev.time, ev.details.c_str());
+        safe_name.c_str(), safe_auth.c_str(), safe_type.c_str(),
+        ev.detection ? "DETECTED" : "WARNING", score, ev.time, safe_details.c_str());
     SERVER_PRINT(line);
-    char game_dir[256]{};
-    GET_GAME_DIR(game_dir);
-    const std::string log_dir = std::string(game_dir) + "/addons/liveac/logs";
-    const std::string log_path = log_dir + "/liveac_evidence.log";
-    const std::string panel_path = log_dir + "/panel_events.jsonl";
-    std::string mkdir_cmd = "mkdir -p \"" + log_dir + "\"";
-    std::system(mkdir_cmd.c_str());
+
+    const std::string log_path = liveac_log_dir + "/liveac_evidence.log";
+    const std::string panel_path = liveac_log_dir + "/panel_events.jsonl";
+    rotate_if_needed(log_path);
+    rotate_if_needed(panel_path);
     std::ofstream file(log_path, std::ios::app);
     if (file) file << line;
     std::ofstream panel(panel_path, std::ios::app);
     if (panel) {
         panel << "{\"time\":" << ev.time
               << ",\"slot\":" << id
-              << ",\"player\":\"" << name << "\""
-              << ",\"auth\":\"" << (auth ? auth : "unknown") << "\""
-              << ",\"type\":\"" << ev.type << "\""
+              << ",\"player\":\"" << json_escape(name) << "\""
+              << ",\"auth\":\"" << json_escape(auth) << "\""
+              << ",\"type\":\"" << json_escape(ev.type) << "\""
+              << ",\"details\":\"" << json_escape(ev.details) << "\""
               << ",\"score\":" << score
               << ",\"level\":\"" << (ev.detection ? "DETECTED" : "WARNING") << "\"}\n";
     }
@@ -227,8 +396,8 @@ void log_evidence(int id, const liveac::Evidence& ev, float score) {
         char watch_line[768];
         std::snprintf(watch_line, sizeof(watch_line),
             "[LiveAC][WATCH] %s: %s (%s), score %.1f - %s\n",
-            name.c_str(), ev.type.c_str(), ev.detection ? "DETECTED" : "WARNING",
-            score, ev.details.c_str());
+            safe_name.c_str(), safe_type.c_str(), ev.detection ? "DETECTED" : "WARNING",
+            score, safe_details.c_str());
         print_to_slot(watch_requester[id], watch_line);
     }
 }
@@ -246,7 +415,7 @@ void print_player_status(edict_t* receiver, int id) {
     print_to(receiver, line);
 }
 
-int command_target(int argument_index = 1) {
+int command_target(edict_t* caller, int argument_index = 1) {
     if (g_engfuncs.pfnCmd_Argc() <= argument_index) return 0;
     const char* arg = g_engfuncs.pfnCmd_Argv(argument_index);
     if (!arg || !*arg) return 0;
@@ -255,13 +424,20 @@ int command_target(int argument_index = 1) {
     if (end && *end == '\0' && slot >= 1 && slot <= MAX_CLIENTS_LOCAL && active_player(static_cast<int>(slot)))
         return static_cast<int>(slot);
 
-    std::string needle(arg);
-    for (char& c : needle) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const std::string needle = lowercase(arg);
+    std::vector<int> matches;
     for (int id = 1; id <= MAX_CLIENTS_LOCAL; ++id) {
         if (!active_player(id)) continue;
-        std::string name = player_name(id);
-        for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (name.find(needle) != std::string::npos) return id;
+        if (lowercase(player_name(id)).find(needle) != std::string::npos) matches.push_back(id);
+    }
+    if (matches.size() == 1) return matches.front();
+    if (matches.size() > 1) {
+        std::ostringstream out;
+        out << "[LiveAC] Multiple players match \"" << text_escape(arg) << "\":\n";
+        for (int id : matches) out << "  #" << id << " " << text_escape(player_name(id)) << "\n";
+        out << "Use the numeric slot.\n";
+        print_to(caller, out.str());
+        return -1;
     }
     return 0;
 }
@@ -279,6 +455,8 @@ void print_scan_report(int id, edict_t* receiver) {
     if (!active_player(id) || !detectors[id]) return;
     const unsigned int new_evidence = evidence_count[id] - scan_start_evidence[id];
     const float current_score = detectors[id]->score();
+    const std::string report_auth = auth_id(id);
+    const std::string report_name = player_name(id);
     const double elapsed = gpGlobals ? gpGlobals->time - scan_started[id] : 0.0;
     const auto& now = detectors[id]->stats();
     const auto& before = scan_start_stats[id];
@@ -320,8 +498,8 @@ void print_scan_report(int id, edict_t* receiver) {
 
     std::ostringstream out;
     out << "\n========== LiveAC Scan Report ==========\n"
-        << "Player: " << player_name(id) << " (#" << id << ")\n"
-        << "SteamID: " << (GETPLAYERAUTHID(INDEXENT(id)) ? GETPLAYERAUTHID(INDEXENT(id)) : "unknown") << "\n"
+        << "Player: " << text_escape(report_name) << " (#" << id << ")\n"
+        << "SteamID: " << text_escape(report_auth) << "\n"
         << "Duration: " << static_cast<int>(elapsed) << " seconds | Samples: " << samples << "\n\n"
         << "AIM [" << result(aim_enough, aim_warning) << "]\n"
         << "  Visible target samples: " << visible << "\n"
@@ -351,17 +529,13 @@ void print_scan_report(int id, edict_t* receiver) {
         << "========================================\n";
     print_to(receiver, out.str());
 
-    char game_dir[256]{};
-    GET_GAME_DIR(game_dir);
-    const std::string log_dir = std::string(game_dir) + "/addons/liveac/logs";
-    std::string mkdir_cmd = "mkdir -p \"" + log_dir + "\"";
-    std::system(mkdir_cmd.c_str());
-    std::ofstream panel(log_dir + "/panel_events.jsonl", std::ios::app);
+    rotate_if_needed(liveac_log_dir + "/panel_events.jsonl");
+    std::ofstream panel(liveac_log_dir + "/panel_events.jsonl", std::ios::app);
     if (panel) {
         panel << "{\"event\":\"scan_report\",\"time\":" << (gpGlobals ? gpGlobals->time : 0.0)
               << ",\"slot\":" << id
-              << ",\"player\":\"" << player_name(id) << "\""
-              << ",\"auth\":\"" << (GETPLAYERAUTHID(INDEXENT(id)) ? GETPLAYERAUTHID(INDEXENT(id)) : "unknown") << "\""
+              << ",\"player\":\"" << json_escape(report_name) << "\""
+              << ",\"auth\":\"" << json_escape(report_auth) << "\""
               << ",\"duration\":" << elapsed << ",\"samples\":" << samples
               << ",\"score\":" << current_score << ",\"new_evidence\":" << new_evidence
               << ",\"aim\":{\"status\":\"" << result(aim_enough, aim_warning) << "\",\"visible_samples\":" << visible << ",\"acquisitions\":" << acquisitions << ",\"reaction_samples\":" << reactions << ",\"events\":" << aim_events << "}"
@@ -387,10 +561,12 @@ void command_help(edict_t* caller) {
     print_to(caller, "  liveac_top                     - highest current suspicion scores\n");
     print_to(caller, "  liveac_reset <slot|name|all>    - clear score/evidence\n");
     print_to(caller, "  liveac_reload_admins            - reload liveac_admins.ini\n");
+    print_to(caller, "  liveac_reload_config            - reload liveac.cfg\n");
+    print_to(caller, "  liveac_menu                     - show management menu/help\n");
 }
 
 void command_status(edict_t* caller) {
-    const int target = command_target();
+    const int target = command_target(caller);
     if (target > 0) {
         print_player_status(caller, target);
         return;
@@ -408,7 +584,7 @@ void command_status(edict_t* caller) {
 }
 
 void command_scan(edict_t* caller) {
-    const int target = command_target();
+    const int target = command_target(caller);
     if (target <= 0) {
         print_to(caller, "[LiveAC] Usage: liveac_scan <slot|partial-name> [15-300 seconds]\n");
         return;
@@ -436,10 +612,11 @@ void command_scan(edict_t* caller) {
         "[LiveAC] Focused scan started for %s (#%d) for %d seconds. Report will print automatically.\n",
         player_name(target).c_str(), target, seconds);
     print_to(caller, message);
+    audit_action(caller, "liveac_scan", player_name(target) + " (#" + std::to_string(target) + ", " + std::to_string(seconds) + "s)");
 }
 
 void command_watch(edict_t* caller) {
-    const int target = command_target();
+    const int target = command_target(caller);
     if (target <= 0) {
         print_to(caller, "[LiveAC] Usage: liveac_watch <slot|partial-name>\n");
         return;
@@ -451,6 +628,7 @@ void command_watch(edict_t* caller) {
     watch_active[target] = true;
     watch_requester[target] = caller ? player_index(caller) : 0;
     print_to(caller, "[LiveAC] Watch enabled. Detector events will appear in your console.\n");
+    audit_action(caller, "liveac_watch", player_name(target) + " (#" + std::to_string(target) + ")");
 }
 
 void command_unwatch(edict_t* caller) {
@@ -462,9 +640,10 @@ void command_unwatch(edict_t* caller) {
             }
         }
         print_to(caller, "[LiveAC] Watch disabled for all your targets.\n");
+        audit_action(caller, "liveac_unwatch", "all");
         return;
     }
-    const int target = command_target();
+    const int target = command_target(caller);
     if (target <= 0) {
         print_to(caller, "[LiveAC] Usage: liveac_unwatch <slot|partial-name|all>\n");
         return;
@@ -472,6 +651,7 @@ void command_unwatch(edict_t* caller) {
     watch_active[target] = false;
     watch_requester[target] = 0;
     print_to(caller, "[LiveAC] Watch disabled.\n");
+    audit_action(caller, "liveac_unwatch", player_name(target) + " (#" + std::to_string(target) + ")");
 }
 
 void command_top(edict_t* caller) {
@@ -496,15 +676,31 @@ void command_reset(edict_t* caller) {
         for (int id = 1; id <= MAX_CLIENTS_LOCAL; ++id)
             if (detectors[id]) reset_player(id);
         print_to(caller, "[LiveAC] All player scores were reset.\n");
+        audit_action(caller, "liveac_reset", "all");
         return;
     }
-    const int target = command_target();
+    const int target = command_target(caller);
     if (target <= 0) {
         print_to(caller, "[LiveAC] Usage: liveac_reset <slot|partial-name|all>\n");
         return;
     }
+    const std::string reset_name = player_name(target);
     reset_player(target);
     print_to(caller, "[LiveAC] Player score and evidence counters reset.\n");
+    audit_action(caller, "liveac_reset", reset_name + " (#" + std::to_string(target) + ")");
+}
+
+
+void command_menu(edict_t* caller) {
+    print_to(caller, "\n========== LiveAC Admin Menu ==========\n");
+    print_to(caller, "1) liveac_status             - all players\n");
+    print_to(caller, "2) liveac_top                - top suspects\n");
+    print_to(caller, "3) liveac_scan <slot> 60     - private focused scan\n");
+    print_to(caller, "4) liveac_watch <slot>       - private live events\n");
+    print_to(caller, "5) liveac_unwatch <slot|all> - stop watch\n");
+    print_to(caller, "6) liveac_reload_config      - reload tuning\n");
+    print_to(caller, "7) liveac_reload_admins      - reload admins\n");
+    print_to(caller, "=======================================\n");
 }
 
 void execute_command(edict_t* caller, const char* command) {
@@ -518,7 +714,17 @@ void execute_command(edict_t* caller, const char* command) {
     else if (std::strcmp(command, "liveac_reset") == 0) command_reset(caller);
     else if (std::strcmp(command, "liveac_reload_admins") == 0) {
         load_admins();
+        audit_action(caller, command);
         print_to(caller, "[LiveAC] Admin list reloaded.\n");
+    }
+    else if (std::strcmp(command, "liveac_reload_config") == 0) {
+        load_config();
+        audit_action(caller, command);
+        print_to(caller, "[LiveAC] Configuration reloaded; detector states reset.\n");
+    }
+    else if (std::strcmp(command, "liveac_menu") == 0) {
+        audit_action(caller, command);
+        command_menu(caller);
     }
 }
 
@@ -530,6 +736,8 @@ void ServerCommandUnwatch() { execute_command(nullptr, "liveac_unwatch"); }
 void ServerCommandTop() { execute_command(nullptr, "liveac_top"); }
 void ServerCommandReset() { execute_command(nullptr, "liveac_reset"); }
 void ServerCommandReloadAdmins() { execute_command(nullptr, "liveac_reload_admins"); }
+void ServerCommandReloadConfig() { execute_command(nullptr, "liveac_reload_config"); }
+void ServerCommandMenu() { execute_command(nullptr, "liveac_menu"); }
 
 
 struct TargetContext {
@@ -705,9 +913,19 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME, META_FUNCTIONS* metaFunctionTable,
     g_engfuncs.pfnAddServerCommand("liveac_top", ServerCommandTop);
     g_engfuncs.pfnAddServerCommand("liveac_reset", ServerCommandReset);
     g_engfuncs.pfnAddServerCommand("liveac_reload_admins", ServerCommandReloadAdmins);
+    g_engfuncs.pfnAddServerCommand("liveac_reload_config", ServerCommandReloadConfig);
+    g_engfuncs.pfnAddServerCommand("liveac_menu", ServerCommandMenu);
 
+    char game_dir[256]{};
+    GET_GAME_DIR(game_dir);
+    liveac_base_dir = std::string(game_dir) + "/addons/liveac";
+    liveac_log_dir = liveac_base_dir + "/logs";
+    config_file_path = liveac_base_dir + "/liveac.cfg";
+    ensure_directory(liveac_base_dir);
+    ensure_directory(liveac_log_dir);
+    load_config();
     load_admins();
-    SERVER_PRINT("[LiveAC] v0.8 loaded. Context-aware target analysis active; bots ignored; manual reports private.\n");
+    SERVER_PRINT("[LiveAC] v1.0 loaded. Developed by IDO, MIT licensed; bots ignored; no automatic ban.\n");
     return TRUE;
 }
 

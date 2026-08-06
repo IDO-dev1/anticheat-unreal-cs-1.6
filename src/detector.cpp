@@ -68,20 +68,21 @@ std::vector<Evidence> PlayerDetector::push(const Sample& s) {
         const float distance = std::sqrt(dx * dx + dy * dy);
         const bool attack_edge = attack_now && ((p.buttons & IN_ATTACK) == 0);
 
-        // Generic live snap detector retained as supporting evidence.
-        if (dt > 0.0 && dt <= cfg_.snap_max_seconds && distance >= cfg_.snap_min_degrees) {
-            std::ostringstream ss;
-            ss << std::fixed << std::setprecision(2) << "angle=" << distance
-               << "deg dt=" << (dt * 1000.0) << "ms";
-            add(out, s, "LIVE_AIM_SNAP", cfg_.snap_weight, ss.str(), false);
+        // A large angle change alone is normal gameplay. Keep it only as a short-lived
+        // candidate and score it when the player attacks immediately afterwards.
+        if (dt > 0.0 && dt <= cfg_.snap_max_seconds && distance >= cfg_.snap_min_degrees)
             last_snap_time_ = s.time;
-        }
+
         if (attack_edge && s.time - last_snap_time_ <= cfg_.attack_after_snap_seconds) {
             if (++snap_attack_count_ >= 3) {
-                add(out, s, "LIVE_SNAP_ATTACK_PATTERN", cfg_.snap_attack_weight,
-                    "three attacks occurred immediately after large angle corrections", false);
+                std::ostringstream ss;
+                ss << "three attacks followed large angle corrections within "
+                   << static_cast<int>(cfg_.attack_after_snap_seconds * 1000.0f) << "ms";
+                add(out, s, "LIVE_SNAP_ATTACK_PATTERN", cfg_.snap_attack_weight, ss.str(), false);
                 snap_attack_count_ = 0;
             }
+        } else if (attack_edge) {
+            snap_attack_count_ = 0;
         }
 
         // UDS AIM TYPE 5 adaptation: learn the player's minimum normal angle step from

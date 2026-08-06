@@ -13,6 +13,7 @@
 #include "detector.hpp"
 
 #include <extdll.h>
+#include <usercmd.h>  // defines usercmd_s/usercmd_t fields used by CmdStart
 #include <meta_api.h>
 #include <dllapi.h>
 #include <engine_api.h>
@@ -29,7 +30,7 @@
 plugin_info_t Plugin_info = {
     META_INTERFACE_VERSION,
     "Live Unreal Scanner",
-    "0.2.1",
+    "0.3.0",
     "2026-08-06",
     "Live adaptation with UnrealDemoScanner-derived detectors",
     "https://github.com/",

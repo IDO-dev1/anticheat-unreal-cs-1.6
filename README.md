@@ -58,3 +58,14 @@ Developed by **IDO** and released under the **MIT License**.
 - `liveac_menu` displays the in-game administration command menu.
 - ReChecker is not duplicated. Use ReChecker separately for configured client resource/hash checks; LiveAC focuses on behavioral detection.
 - No automatic kick or ban.
+
+## Bot target testing
+
+`liveac.cfg` supports two independent bot options:
+
+```ini
+liveac_allow_bot_targets=1
+liveac_allow_bot_scan=0
+```
+
+With these recommended values, bots are not analyzed as suspects, but they are valid enemy targets for Aim and Fire measurements of human players. This allows private testing against YaPB without deterministic bot aim producing false-positive suspect records. Set `liveac_allow_bot_scan=1` only in a controlled development environment. Reload changes with `liveac_reload_config`.

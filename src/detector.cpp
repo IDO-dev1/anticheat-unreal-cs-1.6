@@ -42,8 +42,27 @@ void PlayerDetector::mark(const std::string& type, double now) {
 void PlayerDetector::add(std::vector<Evidence>& out, const Sample& s, const std::string& type,
                          float weight, const std::string& details, bool detection) {
     if (!cooldown_ok(type, s.time)) return;
-    score_ = std::min(100.0f, score_ + weight);
-    out.push_back({s.time, type, weight, details, detection});
+    // A single detector must never be able to drive a player to 100.
+    // Per-type points are capped; high scores require independent evidence types.
+    float cap = 18.0f;
+    if (type == "UDS_IDEALJUMP_ADAPTED") cap = 30.0f;
+    else if (type == "UDS_AIM_TYPE_5_ADAPTED") cap = 22.0f;
+    else if (type == "UDS_AUTOATTACK_ADAPTED") cap = 14.0f;
+    else if (type == "LIVE_SNAP_ATTACK_PATTERN") cap = 10.0f;
+
+    const float before = type_points_[type];
+    const float after = std::min(cap, before + weight);
+    const float accepted = after - before;
+    if (accepted <= 0.0f) return;
+    type_points_[type] = after;
+    active_types_.insert(type);
+
+    float total = 0.0f;
+    for (const auto& item : type_points_) total += item.second;
+    // Diversity gate: one type <=35, two types <=65, 3+ may reach 100.
+    const float diversity_cap = active_types_.size() <= 1 ? 35.0f : (active_types_.size() == 2 ? 65.0f : 100.0f);
+    score_ = std::min(diversity_cap, total);
+    out.push_back({s.time, type, accepted, details, detection});
     mark(type, s.time);
 }
 
@@ -168,7 +187,7 @@ std::vector<Evidence> PlayerDetector::push(const Sample& s) {
 }
 
 void PlayerDetector::reset() {
-    history_.clear(); last_events_.clear(); angle_step_history_.clear(); score_ = 0.0f;
+    history_.clear(); last_events_.clear(); angle_step_history_.clear(); type_points_.clear(); active_types_.clear(); score_ = 0.0f;
     last_time_ = 0.0; last_snap_time_ = -1000.0; last_tiny_angle_time_ = -1000.0;
     previous_on_ground_ = false; previous_jump_ = false; airborne_frames_ = 0;
     search_next_jump_ = false; idealjump_strikes_ = 0; aim5_tiny_strikes_ = 0;

@@ -100,6 +100,11 @@ struct Config {
     float high_score = 75.0f;
     float decay_per_second = 0.20f;
     float evidence_cooldown = 0.75f;
+
+    // Bot handling: bots are ignored as suspects by default, but may be
+    // considered as targets so administrators can test Aim/Fire against YaPB.
+    bool liveac_allow_bot_targets = true;
+    bool liveac_allow_bot_scan = false;
 };
 
 class PlayerDetector {

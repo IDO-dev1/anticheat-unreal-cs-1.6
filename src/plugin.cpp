@@ -199,6 +199,23 @@ bool parse_number(const std::string& value, T& out) {
     return true;
 }
 
+bool parse_bool(const std::string& value, bool& out) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (unsigned char ch : value)
+        normalized.push_back(static_cast<char>(std::tolower(ch)));
+
+    if (normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on") {
+        out = true;
+        return true;
+    }
+    if (normalized == "0" || normalized == "false" || normalized == "no" || normalized == "off") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
 bool apply_config_value(liveac::Config& cfg, const std::string& key, const std::string& value) {
 #define LIVEAC_FLOAT(name) if (key == #name) return parse_number(value, cfg.name)
 #define LIVEAC_INT(name) if (key == #name) return parse_number(value, cfg.name)
@@ -217,6 +234,8 @@ bool apply_config_value(liveac::Config& cfg, const std::string& key, const std::
     LIVEAC_FLOAT(reaction_median_ms); LIVEAC_FLOAT(reaction_stddev_ms);
     LIVEAC_FLOAT(reaction_weight); LIVEAC_FLOAT(alert_score); LIVEAC_FLOAT(high_score);
     LIVEAC_FLOAT(decay_per_second); LIVEAC_FLOAT(evidence_cooldown);
+    if (key == "liveac_allow_bot_targets") return parse_bool(value, cfg.liveac_allow_bot_targets);
+    if (key == "liveac_allow_bot_scan") return parse_bool(value, cfg.liveac_allow_bot_scan);
 #undef LIVEAC_FLOAT
 #undef LIVEAC_INT
     return false;
@@ -589,8 +608,8 @@ void command_scan(edict_t* caller) {
         print_to(caller, "[LiveAC] Usage: liveac_scan <slot|partial-name> [15-300 seconds]\n");
         return;
     }
-    if (is_bot(target)) {
-        print_to(caller, "[LiveAC] Bots are ignored because their deterministic aim creates false positives.\n");
+    if (is_bot(target) && !config.liveac_allow_bot_scan) {
+        print_to(caller, "[LiveAC] Bot scans are disabled. Set liveac_allow_bot_scan=1 only for controlled testing.\n");
         return;
     }
     ensure_player(target);
@@ -621,8 +640,8 @@ void command_watch(edict_t* caller) {
         print_to(caller, "[LiveAC] Usage: liveac_watch <slot|partial-name>\n");
         return;
     }
-    if (is_bot(target)) {
-        print_to(caller, "[LiveAC] Bots are ignored.\n");
+    if (is_bot(target) && !config.liveac_allow_bot_scan) {
+        print_to(caller, "[LiveAC] Bot scans are disabled. Set liveac_allow_bot_scan=1 only for controlled testing.\n");
         return;
     }
     watch_active[target] = true;
@@ -790,7 +809,8 @@ TargetContext target_context(const edict_t* viewer, const usercmd_s* cmd) {
     TargetContext result;
     const int viewer_team = viewer->v.team;
     for (int slot = 1; slot <= MAX_CLIENTS_LOCAL; ++slot) {
-        if (!active_player(slot) || slot == player_index(viewer) || is_bot(slot)) continue;
+        if (!active_player(slot) || slot == player_index(viewer)) continue;
+        if (is_bot(slot) && !config.liveac_allow_bot_targets) continue;
         edict_t* candidate = INDEXENT(slot);
         if (candidate->v.deadflag != DEAD_NO || candidate->v.health <= 0.0f) continue;
         if (viewer_team > 0 && candidate->v.team == viewer_team) continue;
@@ -811,7 +831,7 @@ void CmdStart(const edict_t* player, const usercmd_s* cmd, unsigned int) {
     if (!player || !cmd || player->free) RETURN_META(MRES_IGNORED);
     const int id = player_index(player);
     if (id < 1 || id > MAX_CLIENTS_LOCAL || !player->pvPrivateData) RETURN_META(MRES_IGNORED);
-    if (is_bot(id)) RETURN_META(MRES_IGNORED);
+    if (is_bot(id) && !config.liveac_allow_bot_scan) RETURN_META(MRES_IGNORED);
 
     ensure_player(id);
     liveac::Sample sample;

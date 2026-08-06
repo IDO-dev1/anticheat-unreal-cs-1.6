@@ -1,60 +1,33 @@
+# Live Unreal Scanner v0.3.0
 
-## v0.2.1 build fix
+בסיס נקי למודול Metamod Linux i386 עם מנוע זיהוי לייב מותאם מרעיונות UnrealDemoScanner.
 
-This revision fixes modern GCC/HLSDK compatibility in `plugin.cpp`:
+## בנייה
 
-- Standard library headers are loaded before legacy `extdll.h`.
-- HLSDK `min`/`max` macros are undefined after the SDK headers.
-- `CmdStart` now uses the exact GoldSrc callback signature: `const edict_t*` and `const usercmd_s*`.
-- `Meta_Query` now matches Metamod's `const char*` declaration.
+1. החלף את כל קבצי הפרויקט בגרסה זו.
+2. אל תעלה את `build/` או `deps/`.
+3. בצע commit ו-push.
+4. פתח GitHub Actions והפעל **Build Linux i386**.
+5. הורד את artifact בשם `live-unreal-scanner-v0.3.0-linux-i386`.
 
-# Live Unreal Scanner v0.2
+ה-workflow מוודא שהקובץ הסופי הוא ELF 32-bit לפני האריזה.
 
-Metamod anti-cheat research plugin for CS 1.6/ReHLDS. It analyzes player `usercmd` data
-live inside the server without Python, HTTP or blocking network requests.
+## התיקונים המרכזיים
 
-## Does this version really use UnrealDemoScanner logic?
+- `usercmd_s` מקבל הגדרה מלאה דרך `common/usercmd.h`.
+- כל כותרות C++ נטענות לפני `extdll.h`, ולאחר HLSDK מבוטלים המאקרואים `min/max`.
+- חתימות `CmdStart` ו-`Meta_Query` תואמות ל-HLSDK/Metamod.
+- גם `liveac_core` וגם המודול נבנים עם `-m32`, למניעת ערבוב 64/32-bit בזמן הקישור.
+- אין Python, HTTP או המתנה לרשת בתוך HLDS.
 
-Yes, **v0.2 contains live adaptations of selected algorithms/constants from the actual
-UnrealDemoScanner 1.76.0 source**. It is not the original `.dem` scanner running inside
-HLDS; the original is C# and expects demo frames. The adapted detectors are clearly named:
+## התקנה
 
-- `UDS_AIM_TYPE_5_ADAPTED`
-- `UDS_IDEALJUMP_ADAPTED`
-- `UDS_AUTOATTACK_ADAPTED` (experimental warning)
+הוסף ל-`cstrike/addons/metamod/plugins.ini`:
 
-See `THIRD_PARTY.md` for exact adaptation notes and attribution.
+```text
+linux addons/liveac/dlls/live_unreal_scanner_mm_i386.so
+```
 
-## Safety
+לאחר הפעלה מחדש הרץ `meta list`.
 
-- No automatic ban or kick.
-- No Python or external API.
-- No socket/HTTP call from the game thread.
-- Evidence is logged as `WARNING` or `DETECTED`.
-- Results must be manually reviewed while thresholds are calibrated.
-
-## GitHub build
-
-1. Upload this folder to a GitHub repository.
-2. Open **Actions**.
-3. Run **Build Linux Metamod SO**.
-4. Download artifact `live-unreal-scanner-linux-i386`.
-5. Extract `live_unreal_scanner_mm_i386.so`.
-
-## Install
-
-Copy to:
-
-`cstrike/addons/liveac/dlls/live_unreal_scanner_mm_i386.so`
-
-Add to `cstrike/addons/metamod/plugins.ini`:
-
-`linux addons/liveac/dlls/live_unreal_scanner_mm_i386.so`
-
-Restart and check `meta list`.
-
-## Current limitations
-
-v0.2 has no hitbox/visibility traces, recoil punch data, weapon private-data timing or
-client-side sensitivity value. Therefore it is an evidence collector, not a final verdict
-engine. The next useful step is ReGameDLL/ReAPI weapon timing plus hitbox-aware aim events.
+> גרסה זו מיועדת להתראות ואיסוף ראיות בלבד, ללא Ban/Kick אוטומטי.

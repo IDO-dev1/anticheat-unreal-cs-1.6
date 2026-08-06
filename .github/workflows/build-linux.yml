@@ -36,7 +36,8 @@ jobs:
           grep -q 'const usercmd_s\* cmd' src/plugin.cpp
           grep -q 'liveac_scan' src/plugin.cpp
           grep -q 'pfnClientCommand' src/plugin.cpp
-          grep -q 'if (is_bot(id))' src/plugin.cpp
+          grep -Fq 'if (is_bot(id) && !config.liveac_allow_bot_scan)' src/plugin.cpp
+          grep -Fq 'if (is_bot(slot) && !config.liveac_allow_bot_targets) continue;' src/plugin.cpp
           grep -q 'target_context' src/plugin.cpp
           grep -q 'TARGET_AIM_SNAP' src/detector.cpp
           grep -q 'INSUFFICIENT' src/plugin.cpp
@@ -71,10 +72,10 @@ jobs:
           cp docs/INSTALL_HE.md package/
           cp docs/ADMIN_COMMANDS_HE.md package/
           cp docs/V0.8_HE.md package/
-          tar -czf live-unreal-scanner-v1.0.1-linux-i386.tar.gz -C package .
+          tar -czf live-unreal-scanner-v1.0.2-linux-i386.tar.gz -C package .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: live-unreal-scanner-v1.0.1-linux-i386
-          path: live-unreal-scanner-v1.0.1-linux-i386.tar.gz
+          name: live-unreal-scanner-v1.0.2-linux-i386
+          path: live-unreal-scanner-v1.0.2-linux-i386.tar.gz
           if-no-files-found: error

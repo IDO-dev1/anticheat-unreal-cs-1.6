@@ -38,7 +38,7 @@
 plugin_info_t Plugin_info = {
     META_INTERFACE_VERSION,
     "Live Unreal Scanner",
-    "1.0.0",
+    "1.0.1",
     "2026-08-06",
     "Behavioral anti-cheat developed by IDO",
     "https://github.com/",

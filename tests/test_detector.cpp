@@ -17,6 +17,11 @@ static Sample sample(double t, std::uint64_t cmd, float pitch, float yaw,
 }
 
 int main() {
+    {
+        liveac::Config defaults;
+        assert(defaults.liveac_allow_bot_targets);
+        assert(!defaults.liveac_allow_bot_scan);
+    }
     constexpr std::uint32_t ATTACK=1u, JUMP=2u;
 
     // Large turns without a visible target must not produce aim evidence.

@@ -199,22 +199,6 @@ bool parse_number(const std::string& value, T& out) {
     return true;
 }
 
-bool parse_bool(const std::string& value, bool& out) {
-    std::string normalized;
-    normalized.reserve(value.size());
-    for (unsigned char ch : value)
-        normalized.push_back(static_cast<char>(std::tolower(ch)));
-
-    if (normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on") {
-        out = true;
-        return true;
-    }
-    if (normalized == "0" || normalized == "false" || normalized == "no" || normalized == "off") {
-        out = false;
-        return true;
-    }
-    return false;
-}
 
 bool apply_config_value(liveac::Config& cfg, const std::string& key, const std::string& value) {
 #define LIVEAC_FLOAT(name) if (key == #name) return parse_number(value, cfg.name)

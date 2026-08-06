@@ -1,3 +1,13 @@
+
+## v0.2.1 build fix
+
+This revision fixes modern GCC/HLSDK compatibility in `plugin.cpp`:
+
+- Standard library headers are loaded before legacy `extdll.h`.
+- HLSDK `min`/`max` macros are undefined after the SDK headers.
+- `CmdStart` now uses the exact GoldSrc callback signature: `const edict_t*` and `const usercmd_s*`.
+- `Meta_Query` now matches Metamod's `const char*` declaration.
+
 # Live Unreal Scanner v0.2
 
 Metamod anti-cheat research plugin for CS 1.6/ReHLDS. It analyzes player `usercmd` data
